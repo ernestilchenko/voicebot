@@ -112,26 +112,22 @@ class ReminderSystem:
             document_name: Nazwa dokumentu
             expiration_date: Data wygaśnięcia
         """
-        # W rzeczywistej implementacji, użyłbyś bramki/API SMS
-        # To jest tylko zastępczy kod dla implementacji
+        from twilio.rest import Client
+        from bot.config import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER
+
         formatted_date = expiration_date.strftime("%d.%m.%Y")
         message = f"Przypomnienie: Twój dokument '{document_name}' wygasa dnia {formatted_date} (za 3 tygodnie)."
-        logger.info(f"Wysłanoby SMS na numer {phone_number}: {message}")
 
-        # Przykład z użyciem Twilio (potrzebujesz dodać bibliotekę Twilio i dane uwierzytelniające)
-        """
-        from twilio.rest import Client
-
-        account_sid = 'twoje_account_sid'
-        auth_token = 'twoj_auth_token'
-        client = Client(account_sid, auth_token)
-
-        message = client.messages.create(
-            body=f"Przypomnienie: Twój dokument '{document_name}' wygasa dnia {formatted_date} (za 3 tygodnie).",
-            from_='+1234567890',  # Twój numer Twilio
-            to=f'+{phone_number}'
-        )
-        """
+        try:
+            client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+            message = client.messages.create(
+                body=message,
+                from_=TWILIO_PHONE_NUMBER,
+                to=f'+{phone_number}'
+            )
+            logger.info(f"SMS wysłany do numeru {phone_number}: {message.sid}")
+        except Exception as e:
+            logger.error(f"Błąd podczas wysyłania SMS: {e}")
 
     async def make_voice_call(self, phone_number, document_name, expiration_date):
         """
