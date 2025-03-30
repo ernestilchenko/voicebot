@@ -1,4 +1,5 @@
 import logging
+import pytz
 from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
@@ -28,7 +29,60 @@ class ReminderSystem:
         """
         self.bot = bot
         self.scheduler = AsyncIOScheduler()
+
+        # Natychmiastowe sprawdzenie dokumentów przy starcie (po 5 sekundach)
+        self.scheduler.add_job(
+            self.check_all_documents,
+            'date',
+            run_date=datetime.now() + timedelta(seconds=5),
+            id='check_documents_now'
+        )
+
         self.scheduler.start()
+        logger.info("System przypomnień uruchomiony")
+
+    async def check_all_documents(self):
+        """
+        Sprawdzanie wszystkich dokumentów pod kątem terminu ważności
+        i wysyłanie odpowiednich przypomnień.
+        """
+        logger.info("Sprawdzanie wszystkich dokumentów...")
+        current_date = datetime.now(pytz.UTC)
+        db = SessionLocal()
+
+        try:
+            # Wszystkie dokumenty z datą wygaśnięcia
+            documents = db.query(Document).filter(Document.expiration_date != None).all()
+            logger.info(f"Znaleziono {len(documents)} dokumentów")
+
+            for doc in documents:
+                if not doc.expiration_date:
+                    continue
+
+                # Oblicz różnicę w dniach
+                expiry_date = doc.expiration_date
+                days_diff = (expiry_date.date() - current_date.date()).days
+
+                user = db.query(User).filter(User.id == doc.user_id).first()
+                if not user or not user.phone_number:
+                    logger.warning(f"Brak użytkownika lub numeru telefonu dla dokumentu {doc.id}")
+                    continue
+
+                logger.info(f"Dokument {doc.name}: pozostało {days_diff} dni")
+
+                # Sprawdzenie dla SMS (21 dni / 3 tygodnie przed)
+                if days_diff == 21 and not doc.sms_reminder_sent:
+                    logger.info(f"Wysyłanie SMS dla dokumentu {doc.id} ({doc.name})")
+                    await self.send_sms_reminder(user.phone_number, doc.name, doc.expiration_date)
+                    doc.sms_reminder_sent = True
+
+            # Zapisz zmiany w bazie danych
+            db.commit()
+            logger.info("Zakończono sprawdzanie dokumentów")
+        except Exception as e:
+            logger.error(f"Błąd podczas sprawdzania dokumentów: {e}")
+        finally:
+            db.close()
 
     async def schedule_document_reminders(self, user_id, document_id, expiration_date):
         """
@@ -116,18 +170,24 @@ class ReminderSystem:
         from bot.config import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER
 
         formatted_date = expiration_date.strftime("%d.%m.%Y")
-        message = f"Przypomnienie: Twój dokument '{document_name}' wygasa dnia {formatted_date} (za 3 tygodnie)."
+        message_text = f"Przypomnienie: Twój dokument '{document_name}' wygasa dnia {formatted_date} (za 3 tygodnie)."
+
+        logger.info(f"Próba wysłania SMS do {phone_number}: {message_text}")
+        logger.info(f"Używam konta Twilio: {TWILIO_ACCOUNT_SID[:6]}...{TWILIO_ACCOUNT_SID[-4:]}")
+        logger.info(f"Numer telefonu Twilio: {TWILIO_PHONE_NUMBER}")
 
         try:
             client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
             message = client.messages.create(
-                body=message,
+                body=message_text,
                 from_=TWILIO_PHONE_NUMBER,
                 to=f'+{phone_number}'
             )
             logger.info(f"SMS wysłany do numeru {phone_number}: {message.sid}")
+            return True
         except Exception as e:
             logger.error(f"Błąd podczas wysyłania SMS: {e}")
+            return False
 
     async def make_voice_call(self, phone_number, document_name, expiration_date):
         """
