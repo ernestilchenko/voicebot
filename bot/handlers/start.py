@@ -148,10 +148,33 @@ async def save_document(user_id, file_id, name, mime_type, size):
 
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
-    # Wyczyść poprzedni stan
+    # Czyszczenie poprzedniego stanu
     await state.clear()
 
-    # Najpierw poproś o numer telefonu
+    # Sprawdzenie, czy użytkownik już istnieje w bazie danych
+    db = next(get_db())
+    try:
+        user = db.query(User).filter(User.telegram_id == message.from_user.id).first()
+
+        if user:
+            # Użytkownik już istnieje - witamy go i proponujemy wysłanie dokumentu
+            keyboard = ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="Wyślij dokument")]],
+                resize_keyboard=True,
+                one_time_keyboard=True
+            )
+            await message.answer(
+                f"Witaj ponownie, {user.first_name}! Możesz wysłać dokument.",
+                reply_markup=keyboard
+            )
+            await state.update_data(user_id=user.id)
+            await state.update_data(phone_number=user.phone_number)
+            await state.set_state(UserStates.WAITING_FOR_DOCUMENT)
+            return
+    finally:
+        db.close()
+
+    # Jeśli użytkownik nie istnieje, prosimy o numer telefonu
     keyboard = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="Wyślij numer", request_contact=True)]],
         resize_keyboard=True,
