@@ -1,0 +1,7 @@
+services:
+  voicebot:
+    build: .
+    container_name: voicebot-container
+    restart: unless-stopped
+    environment:
+      - .env

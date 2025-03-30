@@ -1,0 +1,8 @@
+# .gitignore
+.env
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.idea/
+.DS_Store
