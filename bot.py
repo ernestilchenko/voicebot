@@ -12,7 +12,7 @@ from bot.handlers.start import router
 from bot.scheduler import ReminderSystem
 
 # Webhook settings
-BASE_WEBHOOK_URL = os.getenv('WEBHOOK_HOST', 'https://voicebot-production-1898.up.railway.app/')  # Replace with your Railway domain
+BASE_WEBHOOK_URL = os.getenv('WEBHOOK_HOST', 'https://voicebot-production-1898.up.railway.app')  # Replace with your Railway domain
 WEBHOOK_PATH = f"/webhook/{TOKEN_TELEGRAM}"
 WEBHOOK_URL = f"{BASE_WEBHOOK_URL}{WEBHOOK_PATH}"
 WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET', 'your-secret-token')  # Optional but recommended for security
