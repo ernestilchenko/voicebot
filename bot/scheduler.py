@@ -23,7 +23,6 @@ class ReminderSystem:
     def __init__(self, bot: Bot):
         """
         Inicjalizacja systemu przypomnień.
-
         Args:
             bot (Bot): Instancja bota Telegram do wysyłania wiadomości
         """
@@ -36,6 +35,14 @@ class ReminderSystem:
             'date',
             run_date=datetime.now() + timedelta(seconds=5),
             id='check_documents_now'
+        )
+
+        # Regularne sprawdzanie dokumentów co godzinę
+        self.scheduler.add_job(
+            self.check_all_documents,
+            'interval',
+            hours=1,
+            id='check_documents_hourly'
         )
 
         self.scheduler.start()
