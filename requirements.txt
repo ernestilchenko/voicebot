@@ -43,3 +43,4 @@ tzlocal==5.3.1
 urllib3==2.3.0
 uvicorn==0.34.0
 yarl==1.18.3
+google-cloud-storage==2.13.0

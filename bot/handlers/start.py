@@ -130,20 +130,47 @@ async def save_user_contact(telegram_id, first_name, last_name, phone_number, us
     return user
 
 
-async def save_document(user_id, file_id, name, mime_type, size):
+async def save_document(user_id, file_id, name, mime_type, size, bot=None):
     """Funkcja pomocnicza do zapisywania informacji o dokumencie"""
     db = next(get_db())
-    document = Document(
-        file_id=file_id,
-        name=name,
-        mime_type=mime_type,
-        size=size,
-        user_id=user_id
-    )
-    db.add(document)
-    db.commit()
-    db.refresh(document)
-    return document
+    try:
+        document = Document(
+            file_id=file_id,
+            name=name,
+            mime_type=mime_type,
+            size=size,
+            user_id=user_id
+        )
+        db.add(document)
+        db.commit()
+        db.refresh(document)
+
+        # Jeśli mamy dostęp do bota, próbujemy przesłać dokument do GCS
+        if bot:
+            try:
+                from bot.storage import GCSManager
+                gcs_manager = GCSManager()
+
+                # Przesyłanie do GCS
+                gcs_path = await gcs_manager.upload_document(
+                    telegram_bot=bot,
+                    file_id=file_id,
+                    user_id=user_id,
+                    document_name=name
+                )
+
+                # Aktualizacja informacji w bazie danych
+                document.gcs_file_path = gcs_path
+                document.gcs_uploaded = True
+                db.commit()
+                db.refresh(document)
+                logging.info(f"Dokument {name} przesłany do GCS: {gcs_path}")
+            except Exception as e:
+                logging.error(f"Nie udało się przesłać dokumentu do GCS: {e}")
+
+        return document
+    finally:
+        db.close()
 
 
 @router.message(Command("start"))
@@ -226,23 +253,32 @@ async def get_document(message: types.Message, state: FSMContext):
     document = message.document
     user_data = await state.get_data()
 
-    # Zapisz dokument w bazie danych
+    # Zapisz dokument w bazie danych (teraz przekazujemy też obiekt bota)
     doc = await save_document(
         user_data['user_id'],
         document.file_id,
         document.file_name,
         document.mime_type,
-        document.file_size
+        document.file_size,
+        bot=message.bot  # Przekazujemy obiekt bota, aby mógł pobrać plik
     )
 
     await state.update_data(document_id=doc.id)
 
     # Pokaż informacje o dokumencie
-    await message.answer(
+    response_text = (
         f"Dokument otrzymany:\n"
         f"Nazwa: {document.file_name}\n"
-        f"Rozmiar: {document.file_size} bajtów"
+        f"Rozmiar: {document.file_size} bajtów\n"
     )
+
+    # Dodaj informację o statusie przesyłania do GCS
+    if hasattr(doc, 'gcs_uploaded') and doc.gcs_uploaded:
+        response_text += "✅ Dokument został zapisany w bezpiecznym magazynie w chmurze.\n"
+    else:
+        response_text += "⚠️ Dokument został zapisany tylko w systemie Telegram.\n"
+
+    await message.answer(response_text)
 
     # Poproś o datę ważności - rozpocznij od roku
     current_year = datetime.now().year
@@ -395,3 +431,112 @@ async def document_out_of_order(message: types.Message):
 @router.message(F.text == "Wyślij dokument")
 async def document_request_out_of_order(message: types.Message):
     await message.answer("Najpierw proszę podać numer telefonu. Wpisz /start aby rozpocząć.")
+
+
+@router.message(Command("get_document"))
+async def cmd_get_document(message: Message):
+    """Generuje link do pobrania dokumentu"""
+    # Poproś o ID dokumentu lub nazwę
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Pokaż moje dokumenty", callback_data="show_documents")]
+        ]
+    )
+    await message.answer(
+        "Aby pobrać dokument, najpierw sprawdź listę swoich dokumentów:",
+        reply_markup=keyboard
+    )
+
+
+@router.callback_query(lambda c: c.data == "show_documents")
+async def show_documents_for_download(callback_query: types.CallbackQuery):
+    """Pokazuje listę dokumentów użytkownika z przyciskami do pobrania"""
+    db = next(get_db())
+    try:
+        # Znajdź użytkownika po telegram_id
+        user = db.query(User).filter(User.telegram_id == callback_query.from_user.id).first()
+
+        if not user:
+            await callback_query.message.answer(
+                "Nie jesteś zarejestrowany w systemie. Użyj /start aby się zarejestrować.")
+            return
+
+        # Pobierz wszystkie dokumenty użytkownika
+        documents = db.query(Document).filter(Document.user_id == user.id).order_by(Document.created_at.desc()).all()
+
+        if not documents:
+            await callback_query.message.answer("Nie masz żadnych dokumentów w systemie.")
+            return
+
+        # Generuj przyciski dla każdego dokumentu
+        keyboard = []
+        for doc in documents:
+            # Sprawdź, czy dokument ma ścieżkę GCS
+            if hasattr(doc, 'gcs_file_path') and doc.gcs_file_path:
+                keyboard.append([
+                    InlineKeyboardButton(
+                        text=f"📄 {doc.name}",
+                        callback_data=f"download_{doc.id}"
+                    )
+                ])
+
+        if not keyboard:
+            await callback_query.message.answer("Nie znaleziono dokumentów dostępnych do pobrania.")
+            return
+
+        markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        await callback_query.message.answer(
+            "Wybierz dokument, który chcesz pobrać:",
+            reply_markup=markup
+        )
+    finally:
+        db.close()
+
+
+@router.callback_query(lambda c: c.data.startswith("download_"))
+async def generate_download_link(callback_query: types.CallbackQuery):
+    """Generuje link do pobrania wybranego dokumentu"""
+    document_id = int(callback_query.data.split('_')[1])
+
+    db = next(get_db())
+    try:
+        document = db.query(Document).filter(Document.id == document_id).first()
+
+        if not document:
+            await callback_query.message.answer("Nie znaleziono dokumentu.")
+            return
+
+        # Sprawdź, czy dokument ma ścieżkę GCS
+        if not hasattr(document, 'gcs_file_path') or not document.gcs_file_path:
+            await callback_query.message.answer(
+                "Ten dokument nie jest dostępny do pobrania z chmury. "
+                "Zapisany jest tylko w systemie Telegram."
+            )
+            return
+
+        try:
+            # Generuj link do pobrania
+            from bot.storage import GCSManager
+            gcs_manager = GCSManager()
+
+            # Tworzenie URL z czasem wygaśnięcia 1 godzina (3600 sekund)
+            download_url = gcs_manager.get_document_url(document.gcs_file_path, expire_time=3600)
+
+            # Tworzenie przycisku z linkiem
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🔗 Pobierz dokument", url=download_url)]
+                ]
+            )
+
+            await callback_query.message.answer(
+                f"Link do pobrania dokumentu '{document.name}' jest ważny przez 1 godzinę:",
+                reply_markup=keyboard
+            )
+        except Exception as e:
+            logging.error(f"Błąd podczas generowania linku do pobrania: {e}")
+            await callback_query.message.answer(
+                "Wystąpił błąd podczas generowania linku do pobrania. Spróbuj ponownie później."
+            )
+    finally:
+        db.close()

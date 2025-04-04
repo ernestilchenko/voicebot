@@ -1,7 +1,8 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text, BigInteger, Boolean
+# Zaktualizuj plik webapp/models.py
+
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, BigInteger, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from webapp.database import Base
 
 from webapp.database import Base
 
@@ -32,32 +33,16 @@ class Document(Base):
     size = Column(Integer)
     user_id = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    # Добавляем новые поля
+    # Pola dotyczące daty ważności
     expiration_date = Column(DateTime(timezone=True), nullable=True)
     telegram_reminder_sent = Column(Boolean, default=False)
     sms_reminder_sent = Column(Boolean, default=False)
     call_reminder_sent = Column(Boolean, default=False)
 
+    # Nowe pole do przechowywania ścieżki do pliku w Google Cloud Storage
+    gcs_file_path = Column(String(255), nullable=True)
+    # Pole określające czy plik został pomyślnie przesłany do GCS
+    gcs_uploaded = Column(Boolean, default=False)
+
     # Relacja z użytkownikiem
     user = relationship("User", back_populates="documents")
-
-
-class Statistic(Base):
-    __tablename__ = "statistics"
-
-    id = Column(Integer, primary_key=True, index=True)
-    message_count = Column(Integer, default=0)
-    user_count = Column(Integer, default=0)
-    document_count = Column(Integer, default=0)
-    last_activity = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    @classmethod
-    def get_or_create(cls, db):
-        """Pobierz istniejący rekord statystyk lub utwórz nowy, jeśli nie istnieje"""
-        stats = db.query(cls).first()
-        if not stats:
-            stats = cls()
-            db.add(stats)
-            db.commit()
-            db.refresh(stats)
-        return stats

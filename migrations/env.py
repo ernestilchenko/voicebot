@@ -7,7 +7,6 @@ from alembic import context
 
 # Importujemy modele i bazę danych
 from webapp.database import Base
-from webapp.models import User, Document, Statistic  # Importujemy wszystkie modele
 from bot.config import DB_URL
 
 # this is the Alembic Config object, which provides
