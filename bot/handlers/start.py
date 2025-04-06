@@ -617,3 +617,89 @@ async def analyze_document_callback(callback_query: types.CallbackQuery, crew_ma
         await callback_query.message.edit_text(
             f"❌ Wystąpił błąd podczas analizy: {str(e)[:100]}..."
         )
+
+
+# Dodaj tę funkcję do pliku bot/handlers/start.py, na końcu pliku
+
+@router.message(Command("report"))
+async def cmd_document_report(message: Message, crew_manager=None, **kwargs):
+    """Generuje raport o wszystkich dokumentach użytkownika"""
+    db = next(get_db())
+    try:
+        # Znajdź użytkownika po telegram_id
+        user = db.query(User).filter(User.telegram_id == message.from_user.id).first()
+
+        if not user:
+            await message.answer("Nie jesteś zarejestrowany w systemie. Użyj /start aby się zarejestrować.")
+            return
+
+        # Sprawdź czy użytkownik ma dokumenty
+        documents_count = db.query(Document).filter(Document.user_id == user.id).count()
+
+        if documents_count == 0:
+            await message.answer("Nie masz żadnych dokumentów w systemie.")
+            return
+
+        # Powiadom użytkownika o rozpoczęciu generowania raportu
+        processing_message = await message.answer("⏳ Generuję kompleksowy raport o Twoich dokumentach...")
+
+        if not crew_manager:
+            await processing_message.edit_text(
+                "❌ System Crew AI nie jest dostępny. Skontaktuj się z administratorem."
+            )
+            return
+
+        # Generowanie raportu przy użyciu Crew AI
+        import asyncio
+
+        async def run_report_generation():
+            # Wywołujemy metodę asynchroniczną
+            report = await crew_manager.generate_document_report(user.id)
+            return report
+
+        try:
+            report = await run_report_generation()
+
+            if report:
+                # Dzielimy długie raporty na części, jeśli przekraczają limit Telegram (4096 znaków)
+                if len(report) <= 4000:
+                    await processing_message.edit_text(
+                        report,
+                        parse_mode="Markdown"
+                    )
+                else:
+                    # Podziel raport na części i wyślij kilka wiadomości
+                    await processing_message.edit_text(
+                        "📊 Twój raport dokumentów jest gotowy:",
+                        parse_mode="Markdown"
+                    )
+
+                    # Dzielimy na części około 3500 znaków, starając się nie rozdzielać sekcji
+                    parts = []
+                    current_part = ""
+                    for line in report.split('\n'):
+                        if len(current_part) + len(line) + 1 > 3500:
+                            parts.append(current_part)
+                            current_part = line + '\n'
+                        else:
+                            current_part += line + '\n'
+
+                    if current_part:
+                        parts.append(current_part)
+
+                    for i, part in enumerate(parts, 1):
+                        await message.answer(
+                            f"{part}\n\n(Część {i} z {len(parts)})",
+                            parse_mode="Markdown"
+                        )
+            else:
+                await processing_message.edit_text(
+                    "❌ Nie udało się wygenerować raportu. Spróbuj ponownie później."
+                )
+        except Exception as e:
+            logging.error(f"Błąd podczas generowania raportu: {e}")
+            await processing_message.edit_text(
+                f"❌ Wystąpił błąd podczas generowania raportu: {str(e)[:100]}..."
+            )
+    finally:
+        db.close()
