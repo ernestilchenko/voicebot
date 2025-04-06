@@ -229,23 +229,60 @@ class ReminderSystem:
             document_name: Nazwa dokumentu
             expiration_date: Data wygaśnięcia
         """
-        # W rzeczywistej implementacji, użyłbyś API połączeń głosowych
-        # To jest tylko zastępczy kod dla implementacji
-        formatted_date = expiration_date.strftime("%d.%m.%Y")
-        message = f"Połączenie głosowe do {phone_number}: Twój dokument wygasa dnia {formatted_date} (za 2 tygodnie)."
-        logger.info(message)
-
-        # Przykład z użyciem Twilio (potrzebujesz dodać bibliotekę Twilio i dane uwierzytelniające)
-        """
         from twilio.rest import Client
+        from twilio.twiml.voice_response import VoiceResponse
+        from bot.config import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER
 
-        account_sid = 'twoje_account_sid'
-        auth_token = 'twoj_auth_token'
-        client = Client(account_sid, auth_token)
+        formatted_date = expiration_date.strftime("%d.%m.%Y")
 
-        call = client.calls.create(
-            url='http://twoj-serwer.com/voice-response.xml',  # URL do TwiML z wiadomością
-            to=f'+{phone_number}',
-            from_='+1234567890'  # Twój numer Twilio
-        )
-        """
+        try:
+            # Tworzymy TwiML dla odpowiedzi głosowej
+            response = VoiceResponse()
+
+            # Wiadomość o wygaśnięciu dokumentu
+            response.say(
+                f"Uwaga! Ważne przypomnienie. Twój dokument {document_name} wygasa dnia {formatted_date}, "
+                f"czyli za dwa tygodnie. Proszę zaplanować jego odnowienie jak najszybciej.",
+                language="pl-PL", voice="Polly.Maja"
+            )
+
+            response.pause(length=1)
+
+            # Informacja o zakończeniu (bez prośby o wciśnięcie przycisku)
+            response.say(
+                "Dziękujemy za uwagę. To było automatyczne przypomnienie z systemu monitorowania dokumentów.",
+                language="pl-PL", voice="Polly.Maja"
+            )
+
+            # Wykonywanie połączenia
+            client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+            call = client.calls.create(
+                twiml=str(response),
+                to=f'+{phone_number}',
+                from_=TWILIO_PHONE_NUMBER
+            )
+            logger.info(f"Połączenie telefoniczne do {phone_number} zainicjowane: {call.sid}")
+
+            # Aktualizujemy status w bazie danych
+            db = SessionLocal()
+            try:
+                # Znajdź dokument po nazwie i numerze telefonu
+                documents = db.query(Document).join(User).filter(
+                    Document.name == document_name,
+                    User.phone_number == phone_number
+                ).all()
+
+                if documents:
+                    for doc in documents:
+                        doc.call_reminder_sent = True
+                    db.commit()
+                    logger.info(f"Zaktualizowano status powiadomienia głosowego dla dokumentu {document_name}")
+            except Exception as e:
+                logger.error(f"Błąd podczas aktualizacji statusu w bazie danych: {e}")
+            finally:
+                db.close()
+
+            return call.sid
+        except Exception as e:
+            logger.error(f"Błąd podczas wykonywania połączenia głosowego: {e}")
+            return None
