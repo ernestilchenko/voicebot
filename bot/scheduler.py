@@ -87,6 +87,12 @@ class ReminderSystem:
                     await self.send_sms_reminder(user.phone_number, doc.name, doc.expiration_date)
                     doc.sms_reminder_sent = True
 
+                # Sprawdzenie dla połączeń głosowych (14 dni / 2 tygodnie przed)
+                if days_diff == 14 and not doc.call_reminder_sent:
+                    logger.info(f"Wykonywanie połączenia głosowego dla dokumentu {doc.id} ({doc.name})")
+                    await self.make_voice_call(user.phone_number, doc.name, doc.expiration_date)
+                    doc.call_reminder_sent = True
+
             # Zapisz zmiany w bazie danych
             db.commit()
             logger.info("Zakończono sprawdzanie dokumentów")
