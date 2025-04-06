@@ -60,7 +60,7 @@ class CrewManager:
 
         try:
             response = client.chat.completions.create(
-                model="gpt-4",  # lub inny dostępny model
+                model="gpt-4o",  # lub inny dostępny model
                 messages=[
                     {"role": "system",
                      "content": "Jesteś ekspertem od polskich dokumentów urzędowych i identyfikacyjnych. Odpowiadasz tylko w języku polskim i zawsze w formacie JSON."},
