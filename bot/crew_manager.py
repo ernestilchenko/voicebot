@@ -1,6 +1,8 @@
 import logging
-from crewai import Agent, Task, Crew, Process
-from langchain.llms import OpenAI
+from datetime import datetime, timedelta
+import pytz
+import random
+
 from webapp.database import SessionLocal
 from webapp.models import User, Document
 
@@ -9,28 +11,28 @@ logger = logging.getLogger(__name__)
 
 class CrewManager:
     """
-    Klasa zarządzająca zespołem agentów AI do wsparcia funkcji bota.
+    Prosta implementacja menedżera Crew AI do analizy dokumentów.
+    Ta wersja nie wymaga zewnętrznych API i służy jako przykład.
     """
 
-    def __init__(self, api_key):
+    def __init__(self, api_key=None):
         """
-        Inicjalizacja menedżera zespołu AI.
+        Inicjalizacja menedżera.
 
         Args:
-            api_key: Klucz API do modelu języka (np. OpenAI)
+            api_key: Opcjonalny klucz API (nie używany w tej wersji)
         """
-        self.llm = OpenAI(api_key=api_key)
-        logger.info("Zainicjalizowano menedżera Crew AI")
+        logger.info("Zainicjalizowano uproszczoną wersję Crew AI Manager")
 
     def create_document_analysis_crew(self, document_id):
         """
-        Tworzy zespół AI do analizy dokumentu i generowania przypomnień.
+        Uproszczona "analiza" dokumentu zwracająca predefiniowane rekomendacje.
 
         Args:
             document_id: ID dokumentu do analizy
 
         Returns:
-            dict: Wyniki analizy dokumentu
+            str: Wyniki analizy dokumentu
         """
         db = SessionLocal()
         try:
@@ -39,61 +41,69 @@ class CrewManager:
 
             if not document or not user:
                 logger.error(f"Nie znaleziono dokumentu lub użytkownika: document_id={document_id}")
-                return None
+                return "Błąd: Nie znaleziono dokumentu lub użytkownika"
 
-            # Tworzenie agentów
-            analyzer = Agent(
-                role="Analityk Dokumentów",
-                goal="Analizować dokumenty i określać optymalny harmonogram przypomnień",
-                backstory="Jestem ekspertem w analizie dokumentów i tworzeniu harmonogramów przypomnień.",
-                llm=self.llm
+            # Symulacja czasu przetwarzania
+            import time
+            time.sleep(1)
+
+            # Obliczenia na podstawie daty wygaśnięcia
+            current_date = datetime.now(pytz.UTC)
+            days_left = (document.expiration_date - current_date).days if document.expiration_date else 30
+
+            # Określenie priorytetu
+            if days_left <= 14:
+                priority = "KRYTYCZNY"
+            elif days_left <= 30:
+                priority = "WYSOKI"
+            elif days_left <= 60:
+                priority = "ŚREDNI"
+            else:
+                priority = "NISKI"
+
+            # Losowe rekomendacje w zależności od priorytetu
+            recommendations = []
+            if priority in ["KRYTYCZNY", "WYSOKI"]:
+                recommendations = [
+                    "Natychmiast rozpocznij proces odnowienia dokumentu",
+                    "Przygotuj wszystkie potrzebne dokumenty w ciągu 2 dni",
+                    "Skontaktuj się z urzędem telefonicznie dla przyspieszenia procesu",
+                    "Rozważ opcję przyspieszenia za dodatkową opłatą"
+                ]
+            else:
+                recommendations = [
+                    f"Zaplanuj odnowienie dokumentu na co najmniej {max(14, days_left - 30)} dni przed wygaśnięciem",
+                    "Przygotuj wymagane dokumenty i zrób ich kopie",
+                    "Sprawdź godziny otwarcia urzędu i wymagania online",
+                    "Zarezerwuj termin wizyty z wyprzedzeniem"
+                ]
+
+            # Formatowanie wyniku
+            result = (
+                f"*Analiza dokumentu: {document.name}*\n\n"
+                f"📊 *Priorytet*: {priority}\n"
+                f"⏱️ *Pozostały czas*: {days_left} dni\n"
+                f"📅 *Data wygaśnięcia*: {document.expiration_date.strftime('%d.%m.%Y') if document.expiration_date else 'Brak'}\n\n"
+                f"*Rekomendowane działania:*\n"
             )
 
-            communicator = Agent(
-                role="Specjalista Komunikacji",
-                goal="Tworzyć spersonalizowane treści przypomnień dla różnych kanałów",
-                backstory="Specjalizuję się w tworzeniu skutecznych wiadomości dla różnych kanałów komunikacji.",
-                llm=self.llm
-            )
+            for i, rec in enumerate(recommendations, 1):
+                result += f"{i}. {rec}\n"
 
-            # Tworzenie zadań
-            analysis_task = Task(
-                description=f"Przeanalizuj dokument '{document.name}' dla użytkownika {user.first_name}. "
-                            f"Dokument wygasa dnia {document.expiration_date}. "
-                            f"Określ najlepszy harmonogram przypomnień.",
-                agent=analyzer
-            )
+            result += "\n*Uwaga*: To jest symulacja analizy dokumentu. W pełnej wersji Crew AI, analiza byłaby znacznie bardziej dokładna i spersonalizowana."
 
-            communication_task = Task(
-                description="Stwórz spersonalizowane treści przypomnień dla: 1) wiadomości Telegram, "
-                            "2) wiadomości SMS, 3) skryptu połączenia głosowego. "
-                            "Uwzględnij wyniki analizy.",
-                agent=communicator,
-                dependencies=[analysis_task]
-            )
-
-            # Tworzenie zespołu
-            crew = Crew(
-                agents=[analyzer, communicator],
-                tasks=[analysis_task, communication_task],
-                process=Process.sequential
-            )
-
-            # Uruchomienie zespołu
-            results = crew.kickoff()
-
-            logger.info(f"Zakończono analizę dokumentu {document_id} przez Crew AI")
-            return results
+            logger.info(f"Wygenerowano analizę dla dokumentu {document_id}")
+            return result
 
         except Exception as e:
-            logger.error(f"Błąd podczas analizy dokumentu przez Crew AI: {e}")
-            return None
+            logger.error(f"Błąd podczas analizy dokumentu: {e}")
+            return f"Wystąpił błąd podczas analizy: {str(e)}"
         finally:
             db.close()
 
     async def generate_custom_reminder(self, user_id, document_id, reminder_type):
         """
-        Generuje spersonalizowane przypomnienie dla użytkownika.
+        Generuje proste przypomnienie dla użytkownika.
 
         Args:
             user_id: ID użytkownika
@@ -101,7 +111,7 @@ class CrewManager:
             reminder_type: Typ przypomnienia ('telegram', 'sms', 'voice')
 
         Returns:
-            str: Spersonalizowana treść przypomnienia
+            str: Treść przypomnienia
         """
         db = SessionLocal()
         try:
@@ -111,37 +121,35 @@ class CrewManager:
             if not document or not user:
                 return None
 
-            # Agent do generowania przypomnień
-            reminder_agent = Agent(
-                role="Specjalista ds. Przypomnień",
-                goal="Tworzyć skuteczne, spersonalizowane przypomnienia",
-                backstory="Specjalizuję się w tworzeniu przypomnień, które skłaniają do działania.",
-                llm=self.llm
-            )
+            # Przykładowe szablony przypomnień
+            if reminder_type == 'telegram':
+                templates = [
+                    f"📢 Ważne przypomnienie: Twój dokument '{document.name}' wygaśnie dnia {document.expiration_date.strftime('%d.%m.%Y')}. Zaplanuj odnowienie już teraz.",
+                    f"⚠️ {user.first_name}, zostało tylko {(document.expiration_date - datetime.now(pytz.UTC)).days} dni do wygaśnięcia dokumentu '{document.name}'. Nie zwlekaj z odnowieniem.",
+                    f"🔔 Przypomnienie: '{document.name}' traci ważność {document.expiration_date.strftime('%d.%m.%Y')}. Zadbaj o jego odnowienie w odpowiednim czasie."
+                ]
+            elif reminder_type == 'sms':
+                templates = [
+                    f"PRZYPOMNIENIE: Dokument '{document.name}' wygasa {document.expiration_date.strftime('%d.%m.%Y')}. Zaplanuj odnowienie.",
+                    f"{user.first_name}, Twoj dokument wygasa wkrotce. Odnow go do {document.expiration_date.strftime('%d.%m.%Y')}.",
+                    f"Wazne: '{document.name}' traci waznosc za {(document.expiration_date - datetime.now(pytz.UTC)).days} dni. Skontaktuj sie z urzedem."
+                ]
+            elif reminder_type == 'voice':
+                templates = [
+                    f"Dzień dobry, przypominamy że dokument {document.name} wygasa dnia {document.expiration_date.strftime('%d %B %Y')}. Proszę zaplanować wizytę w urzędzie w celu jego odnowienia.",
+                    f"Witaj {user.first_name}, dzwonimy przypomnieć o zbliżającym się terminie ważności dokumentu {document.name}. Prosimy o kontakt z urzędem w celu jego przedłużenia.",
+                    f"Automatyczne przypomnienie: dokument {document.name} wygaśnie za {(document.expiration_date - datetime.now(pytz.UTC)).days} dni. Prosimy o podjęcie działań w celu jego odnowienia."
+                ]
+            else:
+                templates = [
+                    f"Przypomnienie: Dokument '{document.name}' wygasa {document.expiration_date.strftime('%d.%m.%Y')}."
+                ]
 
-            # Zadanie
-            reminder_task = Task(
-                description=f"Stwórz spersonalizowane przypomnienie typu {reminder_type} dla użytkownika "
-                            f"{user.first_name} dotyczące dokumentu '{document.name}', "
-                            f"który wygasa {document.expiration_date}. "
-                            f"Uwzględnij typ kanału komunikacji i dostosuj długość i ton wiadomości.",
-                agent=reminder_agent
-            )
-
-            # Utworzenie prostego zespołu z jednym agentem
-            crew = Crew(
-                agents=[reminder_agent],
-                tasks=[reminder_task],
-                process=Process.sequential
-            )
-
-            # Wykonanie zadania
-            result = crew.kickoff()
-
-            return result
+            # Wybierz losowy szablon
+            return random.choice(templates)
 
         except Exception as e:
-            logger.error(f"Błąd podczas generowania przypomnienia przez Crew AI: {e}")
+            logger.error(f"Błąd podczas generowania przypomnienia: {e}")
             return None
         finally:
             db.close()

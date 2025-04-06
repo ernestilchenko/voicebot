@@ -7,6 +7,7 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from aiohttp import web
 
 from bot.config import TOKEN_TELEGRAM
+from bot.crew_manager import CrewManager
 from bot.handlers.start import router
 from bot.scheduler import ReminderSystem
 
@@ -19,56 +20,48 @@ WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET')
 WEB_SERVER_HOST = "0.0.0.0"
 WEB_SERVER_PORT = int(os.getenv("PORT", 8080))
 
-# Tworzenie globalnej zmiennej dla systemu przypomnień
+# Tworzenie globalnych zmiennych
 reminder_system = None
+crew_manager = None  # Dodaj globalną zmienną
 
 
-# Middleware do przekazywania systemu przypomnień do obsługi zdarzeń
-class ReminderMiddleware:
+# Middleware do przekazywania systemów do obsługi zdarzeń
+class AppMiddleware:
     """
-    Middleware dodający system przypomnień do kontekstu obsługi zdarzeń.
-    Pozwala na dostęp do systemu przypomnień wewnątrz obsługi wiadomości i callback query.
+    Middleware dodający systemy do kontekstu obsługi zdarzeń.
     """
 
-    def __init__(self, reminder_system):
+    def __init__(self, reminder_system, crew_manager):
         """
-        Inicjalizacja middleware z systemem przypomnień.
-
-        Args:
-            reminder_system: Instancja systemu przypomnień
+        Inicjalizacja middleware z systemami.
         """
         self.reminder_system = reminder_system
+        self.crew_manager = crew_manager
 
     async def __call__(self, handler, event, data):
         """
         Wywołanie middleware przed obsługą zdarzenia.
-
-        Args:
-            handler: Funkcja obsługi zdarzenia
-            event: Obsługiwane zdarzenie
-            data: Dane kontekstowe
-
-        Returns:
-            Wynik obsługi zdarzenia
         """
-        # Dodanie reminder_system do danych, które zostaną przekazane do obsługi zdarzeń
+        # Dodanie systemów do danych kontekstowych
         data["reminder_system"] = self.reminder_system
-
+        data["crew_manager"] = self.crew_manager
         return await handler(event, data)
 
 
 async def on_startup(bot: Bot, dispatcher: Dispatcher):
     """
     Funkcja wywoływana podczas uruchamiania bota.
-    Inicjalizuje system przypomnień i ustawia webhook.
+    Inicjalizuje systemy i ustawia webhook.
     """
-    # Inicjalizacja systemu przypomnień
-    global reminder_system
+    # Inicjalizacja systemów
+    global reminder_system, crew_manager
     reminder_system = ReminderSystem(bot)
+    crew_manager = CrewManager()  # Inicjalizacja uproszczonego CrewManager
 
-    # Poprawna rejestracja middleware
-    dispatcher.message.middleware(ReminderMiddleware(reminder_system))
-    dispatcher.callback_query.middleware(ReminderMiddleware(reminder_system))
+    # Rejestracja middleware
+    middleware = AppMiddleware(reminder_system, crew_manager)
+    dispatcher.message.middleware(middleware)
+    dispatcher.callback_query.middleware(middleware)
 
     # Ustawienie webhooka
     await bot.set_webhook(url=WEBHOOK_URL, secret_token=WEBHOOK_SECRET)

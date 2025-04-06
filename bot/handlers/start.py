@@ -34,6 +34,7 @@ async def cmd_help(message: Message):
         "*Dostępne komendy:*\n\n"
         "/start - Rozpocznij pracę z botem i zarejestruj się\n"
         "/documents - Wyświetl listę wszystkich aktualnych dokumentów\n"
+        "/analyze - Analizuj dokument przy użyciu sztucznej inteligencji\n"
         "/help - Wyświetl tę wiadomość pomocy\n\n"
 
         "*Jak korzystać z bota:*\n"
@@ -43,7 +44,8 @@ async def cmd_help(message: Message):
         "4. Bot automatycznie przypomni Ci o zbliżającym się terminie ważności:\n"
         "   - Powiadomienie w Telegramie na miesiąc przed\n"
         "   - SMS na 3 tygodnie przed\n"
-        "   - Połączenie głosowe na 2 tygodnie przed"
+        "   - Połączenie głosowe na 2 tygodnie przed\n"
+        "5. Użyj komendy /analyze, aby uzyskać szczegółową analizę dokumentu i rekomendacje"
     )
     await message.answer(text, parse_mode="Markdown")
 
@@ -541,62 +543,57 @@ async def generate_download_link(callback_query: types.CallbackQuery):
     finally:
         db.close()
 
-    @router.message(Command("analyze"))
-    async def cmd_analyze_document(message: Message, state: FSMContext):
-        """Analizuje dokument przy użyciu Crew AI i podaje rekomendacje"""
-        db = next(get_db())
-        try:
-            user = db.query(User).filter(User.telegram_id == message.from_user.id).first()
 
-            if not user:
-                await message.answer("Nie jesteś zarejestrowany. Użyj /start, aby się zarejestrować.")
-                return
+@router.message(Command("analyze"))
+async def cmd_analyze_document(message: Message, state: FSMContext):
+    """Analizuje dokument przy użyciu Crew AI i podaje rekomendacje"""
+    db = next(get_db())
+    try:
+        user = db.query(User).filter(User.telegram_id == message.from_user.id).first()
 
-            # Wybór dokumentu do analizy
-            documents = db.query(Document).filter(Document.user_id == user.id).all()
+        if not user:
+            await message.answer("Nie jesteś zarejestrowany. Użyj /start, aby się zarejestrować.")
+            return
 
-            if not documents:
-                await message.answer("Nie masz żadnych dokumentów w systemie.")
-                return
+        # Wybór dokumentu do analizy
+        documents = db.query(Document).filter(Document.user_id == user.id).all()
 
-            # Tworzenie klawiatury z dokumentami
-            keyboard = []
-            for doc in documents:
-                keyboard.append([InlineKeyboardButton(
-                    text=f"📄 {doc.name}",
-                    callback_data=f"analyze_{doc.id}"
-                )])
+        if not documents:
+            await message.answer("Nie masz żadnych dokumentów w systemie.")
+            return
 
-            markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-            await message.answer("Wybierz dokument do analizy:", reply_markup=markup)
-        finally:
-            db.close()
+        # Tworzenie klawiatury z dokumentami
+        keyboard = []
+        for doc in documents:
+            keyboard.append([InlineKeyboardButton(
+                text=f"📄 {doc.name}",
+                callback_data=f"analyze_{doc.id}"
+            )])
+
+        markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        await message.answer("Wybierz dokument do analizy:", reply_markup=markup)
+    finally:
+        db.close()
 
 
-@router.callback_query(lambda c: c.data.startswith("analyze_"))
-async def analyze_document_callback(callback_query: types.CallbackQuery, state: FSMContext):
+@router.callback_query(lambda c: c.data and c.data.startswith("analyze_"))
+async def analyze_document_callback(callback_query: types.CallbackQuery, crew_manager=None, **kwargs):
     """Analiza dokumentu przy użyciu Crew AI"""
     document_id = int(callback_query.data.split('_')[1])
 
     await callback_query.message.edit_text("⏳ Analizuję dokument przy użyciu sztucznej inteligencji...")
 
-    # Pobieramy dostęp do reminder_system z danych kontekstowych
-    # W wersji aiogram 3.x nie możemy używać bot.data bezpośrednio
-    data = await state.get_data()
-
-    # Alternatywnie możemy użyć danych z kontekstu callback_query
-
-    # Tworzymy referencję do CrewManager
-    from bot.config import OPENAI_API_KEY
-    from bot.crew_manager import CrewManager
-
-    # Tworzymy nową instancję CrewManager
-    crew_manager = CrewManager(api_key=OPENAI_API_KEY)
+    if not crew_manager:
+        await callback_query.message.edit_text(
+            "❌ System Crew AI nie jest dostępny. Skontaktuj się z administratorem."
+        )
+        return
 
     # Uruchom analizę w tle
     import asyncio
 
     async def run_analysis():
+        # Wywołujemy metodę synchroniczną w osobnym wątku
         results = await asyncio.to_thread(
             crew_manager.create_document_analysis_crew,
             document_id
@@ -608,8 +605,7 @@ async def analyze_document_callback(callback_query: types.CallbackQuery, state: 
 
         if results:
             await callback_query.message.edit_text(
-                f"✅ Analiza dokumentu zakończona!\n\n"
-                f"Rekomendacje:\n{results}",
+                results,
                 parse_mode="Markdown"
             )
         else:
