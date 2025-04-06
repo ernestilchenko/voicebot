@@ -540,3 +540,84 @@ async def generate_download_link(callback_query: types.CallbackQuery):
             )
     finally:
         db.close()
+
+    @router.message(Command("analyze"))
+    async def cmd_analyze_document(message: Message, state: FSMContext):
+        """Analizuje dokument przy użyciu Crew AI i podaje rekomendacje"""
+        db = next(get_db())
+        try:
+            user = db.query(User).filter(User.telegram_id == message.from_user.id).first()
+
+            if not user:
+                await message.answer("Nie jesteś zarejestrowany. Użyj /start, aby się zarejestrować.")
+                return
+
+            # Wybór dokumentu do analizy
+            documents = db.query(Document).filter(Document.user_id == user.id).all()
+
+            if not documents:
+                await message.answer("Nie masz żadnych dokumentów w systemie.")
+                return
+
+            # Tworzenie klawiatury z dokumentami
+            keyboard = []
+            for doc in documents:
+                keyboard.append([InlineKeyboardButton(
+                    text=f"📄 {doc.name}",
+                    callback_data=f"analyze_{doc.id}"
+                )])
+
+            markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+            await message.answer("Wybierz dokument do analizy:", reply_markup=markup)
+        finally:
+            db.close()
+
+
+@router.callback_query(lambda c: c.data.startswith("analyze_"))
+async def analyze_document_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    """Analiza dokumentu przy użyciu Crew AI"""
+    document_id = int(callback_query.data.split('_')[1])
+
+    await callback_query.message.edit_text("⏳ Analizuję dokument przy użyciu sztucznej inteligencji...")
+
+    # Pobieramy dostęp do reminder_system z danych kontekstowych
+    # W wersji aiogram 3.x nie możemy używać bot.data bezpośrednio
+    data = await state.get_data()
+
+    # Alternatywnie możemy użyć danych z kontekstu callback_query
+
+    # Tworzymy referencję do CrewManager
+    from bot.config import OPENAI_API_KEY
+    from bot.crew_manager import CrewManager
+
+    # Tworzymy nową instancję CrewManager
+    crew_manager = CrewManager(api_key=OPENAI_API_KEY)
+
+    # Uruchom analizę w tle
+    import asyncio
+
+    async def run_analysis():
+        results = await asyncio.to_thread(
+            crew_manager.create_document_analysis_crew,
+            document_id
+        )
+        return results
+
+    try:
+        results = await run_analysis()
+
+        if results:
+            await callback_query.message.edit_text(
+                f"✅ Analiza dokumentu zakończona!\n\n"
+                f"Rekomendacje:\n{results}",
+                parse_mode="Markdown"
+            )
+        else:
+            await callback_query.message.edit_text(
+                "❌ Nie udało się przeprowadzić analizy. Spróbuj ponownie później."
+            )
+    except Exception as e:
+        logging.error(f"Błąd podczas analizy dokumentu: {e}")
+        await callback_query.message.edit_text(
+            f"❌ Wystąpił błąd podczas analizy: {str(e)[:100]}..."
+        )

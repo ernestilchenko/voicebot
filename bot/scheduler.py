@@ -1,10 +1,13 @@
 import logging
-import pytz
 from datetime import datetime, timedelta
+
+import pytz
+from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
-from aiogram import Bot
 
+from bot.config import OPENAI_API_KEY
+from bot.crew_manager import CrewManager
 from webapp.database import SessionLocal
 from webapp.models import User, Document
 
@@ -28,6 +31,7 @@ class ReminderSystem:
         """
         self.bot = bot
         self.scheduler = AsyncIOScheduler()
+        self.crew_manager = CrewManager(api_key=OPENAI_API_KEY)
 
         # Natychmiastowe sprawdzenie dokumentów przy starcie (po 5 sekundach)
         self.scheduler.add_job(
@@ -144,25 +148,45 @@ class ReminderSystem:
         finally:
             db.close()
 
+    # Zmodyfikuj metodę send_telegram_reminder:
     async def send_telegram_reminder(self, telegram_id, document_name, expiration_date):
         """
         Wysyłanie przypomnienia na Telegramie.
-
-        Args:
-            telegram_id: ID użytkownika na Telegramie
-            document_name: Nazwa dokumentu
-            expiration_date: Data wygaśnięcia
         """
-        formatted_date = expiration_date.strftime("%d.%m.%Y")
-        message = (
-            f"📢 Przypomnienie: Twój dokument '{document_name}' wygaśnie za miesiąc "
-            f"({formatted_date}). Proszę zaplanować jego odnowienie."
-        )
+        db = SessionLocal()
         try:
+            document = db.query(Document).filter(Document.name == document_name).first()
+            user = db.query(User).filter(User.telegram_id == telegram_id).first()
+
+            if document and user:
+                # Użyj Crew AI do wygenerowania spersonalizowanej wiadomości
+                custom_message = await self.crew_manager.generate_custom_reminder(
+                    user.id, document.id, 'telegram'
+                )
+
+                if custom_message:
+                    message = custom_message
+                else:
+                    # Backup w przypadku błędu
+                    formatted_date = expiration_date.strftime("%d.%m.%Y")
+                    message = (
+                        f"📢 Przypomnienie: Twój dokument '{document_name}' wygaśnie za miesiąc "
+                        f"({formatted_date}). Proszę zaplanować jego odnowienie."
+                    )
+            else:
+                # Standardowa wiadomość
+                formatted_date = expiration_date.strftime("%d.%m.%Y")
+                message = (
+                    f"📢 Przypomnienie: Twój dokument '{document_name}' wygaśnie za miesiąc "
+                    f"({formatted_date}). Proszę zaplanować jego odnowienie."
+                )
+
             await self.bot.send_message(telegram_id, message)
             logger.info(f"Wysłano przypomnienie na Telegramie do użytkownika {telegram_id}")
         except Exception as e:
             logger.error(f"Nie udało się wysłać przypomnienia na Telegramie: {e}")
+        finally:
+            db.close()
 
     async def send_sms_reminder(self, phone_number, document_name, expiration_date):
         """

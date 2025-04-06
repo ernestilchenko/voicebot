@@ -54,11 +54,6 @@ class ReminderMiddleware:
         # Dodanie reminder_system do danych, które zostaną przekazane do obsługi zdarzeń
         data["reminder_system"] = self.reminder_system
 
-        # Również dodajemy reminder_system do Bot.data dla dostępu z callback_query
-        if hasattr(event, 'bot') and hasattr(event.bot, 'data'):
-            event.bot.data = getattr(event.bot, 'data', {})
-            event.bot.data["reminder_system"] = self.reminder_system
-
         return await handler(event, data)
 
 
