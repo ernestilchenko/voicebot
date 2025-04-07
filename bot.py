@@ -6,6 +6,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 
+from bot.voice_webhook import setup_voice_routes
 from bot.config import TOKEN_TELEGRAM
 from bot.crew_manager import CrewManager
 from bot.handlers.start import router
@@ -114,6 +115,9 @@ def main():
 
     # Podłączenie dispatchera do aplikacji
     setup_application(app, dp, bot=bot)
+
+    # Konfiguracja tras dla webhooków głosowych
+    setup_voice_routes(app)
 
     # Uruchomienie serwera webowego
     web.run_app(app, host=WEB_SERVER_HOST, port=WEB_SERVER_PORT)

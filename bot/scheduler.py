@@ -57,7 +57,7 @@ class ReminderSystem:
         Sprawdzanie wszystkich dokumentów pod kątem terminu ważności
         i wysyłanie odpowiednich przypomnień.
         """
-        logger.info("Sprawdzanie wszystkich dokumentów...")
+        logger.info("Sprawdzanie wszystkich dokumentów z użyciem Crew AI...")
         current_date = datetime.now(pytz.UTC)
         db = SessionLocal()
 
@@ -81,17 +81,35 @@ class ReminderSystem:
 
                 logger.info(f"Dokument {doc.name}: pozostało {days_diff} dni")
 
+                # Sprawdzenie dla Telegram (30 dni / 1 miesiąc przed)
+                if days_diff == 30 and not doc.telegram_reminder_sent:
+                    logger.info(f"Wysyłanie wiadomości Telegram dla dokumentu {doc.id} ({doc.name})")
+                    await self.send_telegram_reminder(user.telegram_id, user.id, doc.id, doc.name, doc.expiration_date)
+                    doc.telegram_reminder_sent = True
+
                 # Sprawdzenie dla SMS (21 dni / 3 tygodnie przed)
                 if days_diff == 21 and not doc.sms_reminder_sent:
                     logger.info(f"Wysyłanie SMS dla dokumentu {doc.id} ({doc.name})")
-                    await self.send_sms_reminder(user.phone_number, doc.name, doc.expiration_date)
+                    await self.send_sms_reminder(user.id, doc.id, user.phone_number, doc.name, doc.expiration_date)
                     doc.sms_reminder_sent = True
 
                 # Sprawdzenie dla połączeń głosowych (14 dni / 2 tygodnie przed)
                 if days_diff == 14 and not doc.call_reminder_sent:
-                    logger.info(f"Wykonywanie połączenia głosowego dla dokumentu {doc.id} ({doc.name})")
-                    await self.make_voice_call(user.phone_number, doc.name, doc.expiration_date)
-                    doc.call_reminder_sent = True
+                    # Sprawdzamy, czy już próbowaliśmy dzwonić i czy wiadomość została odsłuchana
+                    if doc.call_attempts == 0 or not doc.call_message_listened:
+                        # Jeśli to kolejna próba, sprawdzamy czy minął wymagany czas od ostatniego połączenia
+                        retry_needed = True
+                        if doc.call_attempts > 0 and doc.last_call_date:
+                            from bot.config import CALL_RETRY_DAYS
+                            days_since_last_call = (current_date - doc.last_call_date).days
+                            retry_needed = days_since_last_call >= CALL_RETRY_DAYS
+
+                        if retry_needed:
+                            logger.info(
+                                f"Wykonywanie połączenia głosowego dla dokumentu {doc.id} ({doc.name}) - próba {doc.call_attempts + 1}")
+                            await self.make_voice_call(user.id, doc.id, user.phone_number, doc.name,
+                                                       doc.expiration_date)
+                            # Nie ustawiamy doc.call_reminder_sent = True tutaj, to zrobimy dopiero gdy użytkownik odsłucha wiadomość
 
             # Zapisz zmiany w bazie danych
             db.commit()
@@ -226,67 +244,104 @@ class ReminderSystem:
             logger.error(f"Błąd podczas wysyłania SMS: {e}")
             return False
 
-    async def make_voice_call(self, phone_number, document_name, expiration_date):
+    async def make_voice_call(self, user_id, document_id, phone_number, document_name, expiration_date):
         """
-        Wykonywanie połączenia głosowego z przypomnieniem.
+        Wykonywanie interaktywnego połączenia głosowego z przypomnieniem.
+        Użytkownik musi potwierdzić odsłuchanie wiadomości naciskając klawisz.
 
         Args:
+            user_id: ID użytkownika
+            document_id: ID dokumentu
             phone_number: Numer telefonu użytkownika
             document_name: Nazwa dokumentu
             expiration_date: Data wygaśnięcia
         """
         from twilio.rest import Client
-        from twilio.twiml.voice_response import VoiceResponse
-        from bot.config import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER
-
-        formatted_date = expiration_date.strftime("%d.%m.%Y")
+        from twilio.twiml.voice_response import VoiceResponse, Gather
+        from bot.config import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER, COMPANY_NAME
+        from datetime import datetime
+        import pytz
+        import os
 
         try:
-            # Tworzymy TwiML dla odpowiedzi głosowej
-            response = VoiceResponse()
+            # Pobieramy dokument z bazy danych
+            db = SessionLocal()
+            try:
+                document = db.query(Document).filter(Document.id == document_id).first()
+                if not document:
+                    logger.error(f"Nie znaleziono dokumentu: {document_id}")
+                    return None
 
-            # Wiadomość o wygaśnięciu dokumentu
-            response.say(
-                f"Uwaga! Ważne przypomnienie. Twój dokument {document_name} wygasa dnia {formatted_date}, "
-                f"czyli za dwa tygodnie. Proszę zaplanować jego odnowienie jak najszybciej.",
-                language="pl-PL", voice="Polly.Maja"
+                # Aktualizujemy licznik prób i datę ostatniego połączenia
+                document.call_attempts += 1
+                document.last_call_date = datetime.now(pytz.UTC)
+                db.commit()
+                db.refresh(document)
+
+                # Zapisujemy liczbę prób do formatowania wiadomości
+                call_attempt = document.call_attempts
+            finally:
+                db.close()
+
+            # Użyj Crew AI do wygenerowania spersonalizowanej wiadomości głosowej
+            custom_message = await self.crew_manager.generate_custom_reminder(
+                user_id, document_id, 'voice'
             )
 
-            response.pause(length=1)
+            if custom_message:
+                voice_text = custom_message
+            else:
+                # Backup w przypadku błędu
+                formatted_date = expiration_date.strftime("%d.%m.%Y")
+                voice_text = (
+                    f"Twój dokument {document_name} wygasa dnia {formatted_date}, "
+                    f"czyli za dwa tygodnie. Prosimy zaplanować jego odnowienie jak najszybciej."
+                )
 
-            # Informacja o zakończeniu (bez prośby o wciśnięcie przycisku)
+            # Tworzymy TwiML dla odpowiedzi głosowej z interaktywnością
+            response = VoiceResponse()
+
+            # Powitanie i przedstawienie firmy
+            greeting_text = f"Dzień dobry. Tutaj automatyczny system powiadomień firmy {COMPANY_NAME}. "
+
+            # Dla ponownych połączeń dodajemy akcent na ważność
+            if call_attempt > 1:
+                greeting_text += f"To jest {call_attempt} próba kontaktu w sprawie ważnego przypomnienia. "
+
+            greeting_text += "Aby wysłuchać ważnej informacji, naciśnij 1."
+
+            response.say(greeting_text, language="pl-PL", voice="Polly.Maja")
+
+            # Tworzymy Gather do zbierania wprowadzania użytkownika (przycisk 1)
+            gather = Gather(num_digits=1, action=f"/voice-response?document_id={document_id}&user_id={user_id}",
+                            method="POST")
+            gather.say("Naciśnij 1, aby kontynuować.", language="pl-PL", voice="Polly.Maja")
+            response.append(gather)
+
+            # Jeśli użytkownik nie nacisnął przycisku
             response.say(
-                "Dziękujemy za uwagę. To było automatyczne przypomnienie z systemu monitorowania dokumentów.",
-                language="pl-PL", voice="Polly.Maja"
+                "Nie wykryliśmy żadnego naciśnięcia klawiszy. Prosimy oddzwonić na ten numer lub spodziewać się kolejnego połączenia.",
+                language="pl-PL",
+                voice="Polly.Maja"
             )
 
             # Wykonywanie połączenia
             client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+            # Ustawiamy webhook do obsługi odpowiedzi użytkownika
+            # Używamy publicznego URL Railway
+            webhook_url = f"https://voicebot-production-1898.up.railway.app/voice-response"
+
             call = client.calls.create(
                 twiml=str(response),
                 to=f'+{phone_number}',
-                from_=TWILIO_PHONE_NUMBER
+                from_=TWILIO_PHONE_NUMBER,
+                status_callback=webhook_url,
+                status_callback_event=['completed'],
+                status_callback_method='POST'
             )
-            logger.info(f"Połączenie telefoniczne do {phone_number} zainicjowane: {call.sid}")
 
-            # Aktualizujemy status w bazie danych
-            db = SessionLocal()
-            try:
-                # Znajdź dokument po nazwie i numerze telefonu
-                documents = db.query(Document).join(User).filter(
-                    Document.name == document_name,
-                    User.phone_number == phone_number
-                ).all()
-
-                if documents:
-                    for doc in documents:
-                        doc.call_reminder_sent = True
-                    db.commit()
-                    logger.info(f"Zaktualizowano status powiadomienia głosowego dla dokumentu {document_name}")
-            except Exception as e:
-                logger.error(f"Błąd podczas aktualizacji statusu w bazie danych: {e}")
-            finally:
-                db.close()
+            logger.info(f"Interaktywne połączenie do numeru {phone_number} zainicjowane: {call.sid}")
 
             return call.sid
         except Exception as e:

@@ -38,6 +38,10 @@ class Document(Base):
     telegram_reminder_sent = Column(Boolean, default=False)
     sms_reminder_sent = Column(Boolean, default=False)
     call_reminder_sent = Column(Boolean, default=False)
+    # Dodatkowe pola do śledzenia połączeń głosowych
+    call_attempts = Column(Integer, default=0)  # Liczba prób połączenia
+    call_message_listened = Column(Boolean, default=False)  # Czy użytkownik odsłuchał wiadomość
+    last_call_date = Column(DateTime(timezone=True), nullable=True)  # Data ostatniego połączenia
 
     # Nowe pole do przechowywania ścieżki do pliku w Google Cloud Storage
     gcs_file_path = Column(String(255), nullable=True)
