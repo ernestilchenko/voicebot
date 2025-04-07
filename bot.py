@@ -1,5 +1,7 @@
 import logging
 import os
+import subprocess
+import sys
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -54,6 +56,14 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher):
     Funkcja wywoływana podczas uruchamiania bota.
     Inicjalizuje systemy i ustawia webhook.
     """
+
+    try:
+        # Выполняем миграцию алембика автоматически при запуске
+        subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], check=True)
+        logging.info("Database migrations have been successfully applied")
+    except Exception as e:
+        logging.error(f"Error when applying migrations: {e}")
+
     # Inicjalizacja systemów
     global reminder_system, crew_manager
 
