@@ -7,7 +7,7 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from aiohttp import web
 
 from bot.voice_webhook import setup_voice_routes
-from bot.config import TOKEN_TELEGRAM
+from bot.config import TOKEN_TELEGRAM, OPENAI_API_KEY
 from bot.crew_manager import CrewManager
 from bot.handlers.start import router
 from bot.scheduler import ReminderSystem
@@ -56,8 +56,14 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher):
     """
     # Inicjalizacja systemów
     global reminder_system, crew_manager
-    reminder_system = ReminderSystem(bot)
-    crew_manager = CrewManager()  # Inicjalizacja uproszczonego CrewManager
+
+    # Inicjalizacja CrewManager z przekazaniem klucza API OpenAI
+    crew_manager = CrewManager(api_key=OPENAI_API_KEY)
+    logging.info("Zainicjalizowano CrewManager z obsługą Crew AI")
+
+    # Inicjalizacja systemu przypomnień z przekazaniem bota i CrewManager
+    reminder_system = ReminderSystem(bot=bot, crew_manager=crew_manager)
+    logging.info("Zainicjalizowano ReminderSystem z integracją Crew AI")
 
     # Rejestracja middleware
     middleware = AppMiddleware(reminder_system, crew_manager)
