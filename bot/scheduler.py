@@ -267,8 +267,7 @@ class ReminderSystem:
 
     async def make_voice_call(self, user_id, document_id, phone_number, document_name, expiration_date):
         """
-        Wykonywanie interaktywnego połączenia głosowego z przypomnieniem.
-        Użytkownik musi potwierdzić odsłuchanie wiadomości naciskając klawisz.
+        Wykonywanie prostego połączenia głosowego bez interaktywności.
 
         Args:
             user_id: ID użytkownika
@@ -278,11 +277,10 @@ class ReminderSystem:
             expiration_date: Data wygaśnięcia
         """
         from twilio.rest import Client
-        from twilio.twiml.voice_response import VoiceResponse, Gather
+        from twilio.twiml.voice_response import VoiceResponse
         from bot.config import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER, COMPANY_NAME
         from datetime import datetime
         import pytz
-        import os
 
         try:
             # Pobieramy dokument z bazy danych
@@ -319,49 +317,43 @@ class ReminderSystem:
                     f"czyli za dwa tygodnie. Prosimy zaplanować jego odnowienie jak najszybciej."
                 )
 
-            # Tworzymy TwiML dla odpowiedzi głosowej z interaktywnością
+            # Tworzymy TwiML dla prostej odpowiedzi głosowej bez interaktywności
             response = VoiceResponse()
 
-            # Powitanie i przedstawienie firmy
+            # Powitanie i pełna wiadomość
             greeting_text = f"Dzień dobry. Tutaj automatyczny system powiadomień firmy {COMPANY_NAME}. "
 
             # Dla ponownych połączeń dodajemy akcent na ważność
             if call_attempt > 1:
                 greeting_text += f"To jest {call_attempt} próba kontaktu w sprawie ważnego przypomnienia. "
 
-            greeting_text += "Aby wysłuchać ważnej informacji, naciśnij 1."
+            # Pełna wiadomość
+            full_message = greeting_text + voice_text + " Dziękujemy za uwagę."
 
-            response.say(greeting_text, language="pl-PL", voice="Polly.Maja")
-
-            # Tworzymy Gather do zbierania wprowadzania użytkownika (przycisk 1)
-            gather = Gather(num_digits=1, action=f"/voice-response?document_id={document_id}&user_id={user_id}",
-                            method="POST")
-            gather.say("Naciśnij 1, aby kontynuować.", language="pl-PL", voice="Polly.Maja")
-            response.append(gather)
-
-            # Jeśli użytkownik nie nacisnął przycisku
-            response.say(
-                "Nie wykryliśmy żadnego naciśnięcia klawiszy. Prosimy oddzwonić na ten numer lub spodziewać się kolejnego połączenia.",
-                language="pl-PL",
-                voice="Polly.Maja"
-            )
+            response.say(full_message, language="pl-PL", voice="Polly.Maja")
 
             # Wykonywanie połączenia
             client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
-            # Używamy domeny Railway jako webhook URL
-            webhook_url = "https://voicebot-production-1898.up.railway.app/voice-response"
-
             call = client.calls.create(
                 twiml=str(response),
                 to=f'+{phone_number}',
-                from_=TWILIO_PHONE_NUMBER,
-                status_callback=webhook_url,
-                status_callback_event=['completed'],
-                status_callback_method='POST'
+                from_=TWILIO_PHONE_NUMBER
             )
 
-            logger.info(f"Interaktywne połączenie do numeru {phone_number} zainicjowane: {call.sid}")
+            logger.info(f"Połączenie głosowe bez interaktywności do numeru {phone_number} zainicjowane: {call.sid}")
+
+            # Po wykonaniu połączenia oznaczamy dokument jako obsłużony
+            db = SessionLocal()
+            try:
+                document = db.query(Document).filter(Document.id == document_id).first()
+                if document:
+                    document.call_message_listened = True
+                    document.call_reminder_sent = True
+                    db.commit()
+                    logger.info(f"Dokument {document_id} oznaczony jako obsłużony")
+            finally:
+                db.close()
 
             return call.sid
         except Exception as e:
