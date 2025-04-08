@@ -18,6 +18,10 @@ async def handle_voice_response(request):
     Sprawdza, czy użytkownik nacisnął '1', aby odsłuchać wiadomość.
     """
     try:
+        logger.info("Otrzymano żądanie webhook dla voice-response")
+        logger.info(f"Parametry żądania: {request.query}")
+        logger.info(f"Treść żądania: {await request.text()}")
+
         # Pobieramy parametry z żądania
         params = await request.post()
         digits_pressed = params.get('Digits', '')
@@ -85,9 +89,10 @@ async def handle_voice_response(request):
             )
 
             # Dajemy użytkownikowi jeszcze jedną szansę
+            full_url = f"https://voicebot-production-1898.up.railway.app/voice-response?document_id={document_id}&user_id={user_id}"
             gather = response.gather(
                 num_digits=1,
-                action=f"/voice-response?document_id={document_id}&user_id={user_id}",
+                action=full_url,
                 method="POST"
             )
             gather.say("Naciśnij 1, aby kontynuować.", language="pl-PL", voice="Polly.Maja")
@@ -95,7 +100,7 @@ async def handle_voice_response(request):
         return web.Response(content_type='text/xml', text=str(response))
 
     except Exception as e:
-        logger.error(f"Błąd podczas obsługi odpowiedzi głosowej: {e}")
+        logger.error(f"Błąd podczas obsługi odpowiedzi głosowej: {e}", exc_info=True)
         response = VoiceResponse()
         response.say(
             "Przepraszamy, wystąpił błąd w systemie. Prosimy spróbować później.",
