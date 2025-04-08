@@ -14,89 +14,53 @@ logger = logging.getLogger(__name__)
 
 async def handle_voice_response(request):
     """
-    Obsługuje odpowiedź użytkownika podczas połączenia głosowego.
-    Sprawdza, czy użytkownik nacisnął '1', aby odsłuchać wiadomość.
+    Uproszczona wersja handlera do diagnostyki problemu.
     """
     try:
-        logger.info("Otrzymano żądanie webhook dla voice-response")
-        logger.info(f"Parametry żądania: {request.query}")
-        logger.info(f"Treść żądania: {await request.text()}")
+        # Pełne logowanie żądania
+        logger.info("==== OTRZYMANO ŻĄDANIE WEBHOOK ====")
+        logger.info(f"Metoda: {request.method}")
+        logger.info(f"URL: {request.url}")
+        logger.info(f"Nagłówki: {request.headers}")
 
-        # Pobieramy parametry z żądania
-        params = await request.post()
-        digits_pressed = params.get('Digits', '')
+        body_text = await request.text()
+        logger.info(f"Treść żądania: {body_text}")
 
-        # Pobieramy ID dokumentu i użytkownika z parametrów URL
-        query_params = request.query
-        document_id = query_params.get('document_id')
-        user_id = query_params.get('user_id')
-
-        if not document_id or not user_id:
-            logger.error("Brak document_id lub user_id w żądaniu")
-            return web.Response(text="Parametry nieprawidłowe", status=400)
-
-        # Tworzymy odpowiedź głosową
+        # Tworzymy prostą odpowiedź TwiML bez dostępu do bazy danych
         response = VoiceResponse()
+        response.say(
+            "Dziękujemy za naciśnięcie przycisku. To jest test systemu powiadomień.",
+            language="pl-PL",
+            voice="Polly.Maja"
+        )
 
-        # Sprawdzamy, czy użytkownik nacisnął '1'
-        if digits_pressed == '1':
-            # Użytkownik potwierdził chęć odsłuchania wiadomości
+        # Logowanie wygenerowanej odpowiedzi
+        response_text = str(response)
+        logger.info(f"Odpowiedź: {response_text}")
 
-            # Pobieramy dokument i użytkownika z bazy danych
-            db = SessionLocal()
-            try:
-                document = db.query(Document).filter(Document.id == document_id).first()
-                user = db.query(User).filter(User.id == user_id).first()
+        return web.Response(content_type='text/xml', text=response_text)
 
-                if not document or not user:
-                    logger.error(
-                        f"Nie znaleziono dokumentu lub użytkownika: document_id={document_id}, user_id={user_id}")
-                    response.say(
-                        "Przepraszamy, wystąpił błąd. Prosimy o kontakt z administratorem systemu.",
-                        language="pl-PL",
-                        voice="Polly.Maja"
-                    )
-                    return web.Response(content_type='text/xml', text=str(response))
+    except Exception as e:
+        logger.error(f"BŁĄD W HANDLERZE WEBHOOKA: {e}", exc_info=True)
+        # Nawet w przypadku błędu tworzymy poprawną odpowiedź TwiML
+        response = VoiceResponse()
+        response.say(
+            "Wystąpił błąd w systemie. Trwa diagnostyka problemu.",
+            language="pl-PL",
+            voice="Polly.Maja"
+        )
+        return web.Response(content_type='text/xml', text=str(response))
 
-                # Możemy użyć CrewManager do wygenerowania wiadomości, ale teraz użyjemy prostej
-                formatted_date = document.expiration_date.strftime(
-                    "%d.%m.%Y") if document.expiration_date else "nieznana data"
 
-                message = (
-                    f"Ważne przypomnienie od firmy {COMPANY_NAME}. "
-                    f"Twój dokument {document.name} wygasa w dniu {formatted_date}. "
-                    f"Prosimy o zaplanowanie jego odnowienia jak najszybciej. "
-                    f"Dziękujemy za uwagę."
-                )
-
-                # Odtwarzamy wiadomość
-                response.say(message, language="pl-PL", voice="Polly.Maja")
-
-                # Oznaczamy dokument jako odsłuchany
-                document.call_message_listened = True
-                document.call_reminder_sent = True
-                db.commit()
-
-                logger.info(f"Użytkownik {user_id} odsłuchał wiadomość o dokumencie {document_id}")
-            finally:
-                db.close()
-        else:
-            # Użytkownik nie nacisnął '1' lub nacisnął inny klawisz
-            response.say(
-                "Nieprawidłowy klawisz. Aby odsłuchać ważną wiadomość, naciśnij 1.",
-                language="pl-PL",
-                voice="Polly.Maja"
-            )
-
-            # Dajemy użytkownikowi jeszcze jedną szansę
-            full_url = f"https://voicebot-production-1898.up.railway.app/voice-response?document_id={document_id}&user_id={user_id}"
-            gather = response.gather(
-                num_digits=1,
-                action=full_url,
-                method="POST"
-            )
-            gather.say("Naciśnij 1, aby kontynuować.", language="pl-PL", voice="Polly.Maja")
-
+    except Exception as e:
+        logger.error(f"ERROR IN WEBHOOK HANDLER: {e}", exc_info=True)
+        # Даже при ошибке формируем валидный TwiML-ответ
+        response = VoiceResponse()
+        response.say(
+            "Wystąpił błąd w systemie. Trwa diagnostyka problemu.",
+            language="pl-PL",
+            voice="Polly.Maja"
+        )
         return web.Response(content_type='text/xml', text=str(response))
 
     except Exception as e:
@@ -134,4 +98,15 @@ def setup_voice_routes(app):
     app.router.add_post('/voice-response', handle_voice_response)
     app.router.add_post('/call-status', handle_call_status)
 
+    # Dodatkowa trasa testowa
+    app.router.add_get('/test-webhook', test_webhook)
+
     logger.info("Skonfigurowano trasy dla webhooków głosowych")
+
+
+async def test_webhook(request):
+    """
+    Prosty endpoint testowy do sprawdzenia, czy routing działa prawidłowo.
+    """
+    logger.info("Test webhook endpoint called")
+    return web.Response(text="Webhook test successful!")
