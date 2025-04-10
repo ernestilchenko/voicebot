@@ -747,3 +747,59 @@ class CrewManager:
             return f"Wystąpił błąd podczas generowania raportu: {str(e)}"
         finally:
             db.close()
+
+    async def translate_document_to_english(self, filename: str, save_to: str = None) -> str:
+        """
+        Tłumaczy dokument z języka polskiego na angielski z zachowaniem formatu Markdown.
+
+        Funkcja wykorzystuje model GPT-4o do przetłumaczenia dokumentu na język angielski. Dokument
+        przesyłany jest jako plik wejściowy do API OpenAI, a następnie tłumaczony zgodnie z określonymi
+        zasadami (styl formalny, pełna zgodność merytoryczna, formatowanie Markdown).
+
+        Args:
+            filename (str): Ścieżka do pliku z dokumentem w języku polskim.
+            save_to (str, optional): Ścieżka do pliku, do którego ma zostać zapisany wynik tłumaczenia (jeśli podana).
+
+        Returns:
+            str: Przetłumaczony tekst w języku angielskim w formacie Markdown lub komunikat o błędzie.
+        """
+        client = openai.OpenAI(api_key=self.api_key)
+        try:
+            file = client.files.create(
+                file=open(filename, "rb"),
+                purpose="user_data"
+            )
+        except Exception as e:
+            print(f"[ERROR] Error openning file: {e}")
+            return f"[ERROR] {e}"
+        
+        response = client.responses.create(
+            model="gpt-4o",
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_file",
+                            "file_id": file.id,
+                        },
+                        {
+                            "type": "input_text",
+                            "text": """Jesteś doświadczonym tłumaczem dokumentów specjalizującym się w tłumaczeniu formalnych
+    i nieformalnych tekstów z języka polskiego na angielski. Dbasz o zachowanie kontekstu, tonu
+    oraz formatu źródłowego dokumentu. Twoje tłumaczenia są przejrzyste, wierne oryginałowi,
+    a wynikowy tekst sformatowany jest w stylu Markdown (nagłówki, listy, pogrubienia itd. gdzie to potrzebne).
+    Przetłumacz poniższy dokument z języka polskiego na angielski.
+    Zasady:
+    - Zachowaj pełną zgodność merytoryczną.
+    - Użyj formatu Markdown (np. # nagłówki, **pogrubienia**, *kursywa*, listy itd.).
+    - Nie pomijaj żadnych fragmentów.
+    - Styl ma być przejrzysty i profesjonalny.
+    """
+                        },                        
+                    ]
+                }
+            ]
+        )
+
+        return response.output_text
