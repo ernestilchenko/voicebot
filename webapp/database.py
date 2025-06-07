@@ -1,23 +1,20 @@
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from contextlib import contextmanager
 
-from bot.config import DB_URL
+import psycopg2
 
-# Utworzenie silnika bazodanowego
-engine = create_engine(DB_URL)
+from bot.config import PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD
 
-# Tworzenie sesji
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# Bazowa klasa dla modeli ORM
-Base = declarative_base()
+CONNECTION_STRING = f"host={PGHOST} port={PGPORT} dbname={PGDATABASE} user={PGUSER} password={PGPASSWORD}"
 
 
-# Funkcja pomocnicza do uzyskania sesji DB
+@contextmanager
 def get_db():
-    db = SessionLocal()
+    conn = psycopg2.connect(CONNECTION_STRING)
     try:
-        yield db
+        yield conn
     finally:
-        db.close()
+        conn.close()
+
+
+def get_db_connection():
+    return psycopg2.connect(CONNECTION_STRING)
